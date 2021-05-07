@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"github.com/urfave/cli"
@@ -10,11 +11,13 @@ import (
 	"syscall"
 	"time"
 	"whitenoise/cmd/chat"
+	"whitenoise/common"
 	"whitenoise/common/account"
 	"whitenoise/common/config"
 	"whitenoise/common/log"
 	"whitenoise/network"
 	"whitenoise/sdk"
+	"whitenoise/secure"
 )
 
 var node *network.Node
@@ -81,11 +84,21 @@ func initApp() *cli.App {
 				BootFlag,
 			},
 		},
-
 		{
 			Name:   "chat",
 			Usage:  "Start chat",
 			Action: StartChat,
+			Flags: []cli.Flag{
+				BootStrapFlag,
+				NodeFlag,
+				LogLevelFlag,
+				NickFlag,
+			},
+		},
+		{
+			Name:   "test",
+			Usage:  "Test Circuit",
+			Action: TestCircuit,
 			Flags: []cli.Flag{
 				BootStrapFlag,
 				NodeFlag,
@@ -176,6 +189,113 @@ func StartChat(ctx *cli.Context) {
 		waitToExit()
 	} else {
 		chat.Chat(nick, wnSDK.GetWhiteNoiseID(), "", wnSDK)
+		waitToExit()
+	}
+}
+
+func TestCircuit(ctx *cli.Context) {
+	logLevel := ctx.Int("log")
+	log.InitLog(logLevel, os.Stdout, log.PATH)
+	bootstrap := ctx.String("bootstrap")
+	n := ctx.String("node")
+	con := context.Background()
+	nick := ctx.String("nick")
+	if nick == "" {
+		nick = "Ninox"
+	}
+
+	var err error
+	sdk.BootStrapPeers = bootstrap
+	wnSDK, err = sdk.NewClient(con)
+	if err != nil {
+		panic(err)
+	}
+
+	peers, err := wnSDK.GetMainNetPeers(10)
+	if err != nil {
+		panic(err)
+	}
+	if len(peers) == 0 {
+		panic("No peers exist")
+	}
+
+	index := rand.New(rand.NewSource(time.Now().UnixNano())).Int() % len(peers)
+	entry := peers[index]
+	log.Info("entry:", entry.String(), ",index:", index)
+	err = wnSDK.Register(entry)
+	if err != nil {
+		panic(err)
+	}
+
+	if n != "" {
+		conn, sessionID, err := wnSDK.Dial(n)
+		if err != nil {
+			panic(err)
+		}
+		log.Debug("NewCircuit done", sessionID)
+		//read
+		go func() {
+			for {
+				msg, err := secure.ReadPayload(conn)
+				if err != nil {
+					panic(err)
+				}
+				if len(msg) != 0 {
+					log.Info("get: ", string(msg))
+				}
+			}
+		}()
+		//write
+		go func() {
+			f := bufio.NewReader(os.Stdin)
+			for {
+				input, _ := f.ReadString('\n')
+				msg := secure.EncodePayload([]byte(input))
+				err := wnSDK.SendMessage(msg, sessionID)
+				if err != nil {
+					panic(err)
+				}
+			}
+		}()
+		waitToExit()
+	} else {
+		getCircuit := make(chan string)
+		err := wnSDK.EventBus().SubscribeOnce(common.NewSecureConnAnswerTopic, func(id string) {
+			log.Info(id)
+			getCircuit <- id
+		})
+		if err != nil {
+			panic(err)
+		}
+		sessionID := <-getCircuit
+		conn, ok := wnSDK.GetCircuit(sessionID)
+		if !ok {
+			panic("no conn for " + sessionID)
+		}
+		//read
+		go func() {
+			for {
+				msg, err := secure.ReadPayload(conn)
+				if err != nil {
+					panic(err)
+				}
+				if len(msg) != 0 {
+					log.Info("get: ", string(msg))
+				}
+			}
+		}()
+		//write
+		go func() {
+			f := bufio.NewReader(os.Stdin)
+			for {
+				input, _ := f.ReadString('\n')
+				msg := secure.EncodePayload([]byte(input))
+				err := wnSDK.SendMessage(msg, sessionID)
+				if err != nil {
+					panic(err)
+				}
+			}
+		}()
 		waitToExit()
 	}
 }
