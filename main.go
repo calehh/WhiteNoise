@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"github.com/golang/protobuf/proto"
 	"github.com/urfave/cli"
+	"io"
 	"math/rand"
 	"os"
 	"os/signal"
@@ -13,8 +16,10 @@ import (
 	"whitenoise/common/account"
 	"whitenoise/common/config"
 	"whitenoise/common/log"
+	"whitenoise/internal/pb"
 	"whitenoise/network"
 	"whitenoise/sdk"
+	"whitenoise/secure"
 )
 
 var node *network.Node
@@ -89,6 +94,28 @@ func initApp() *cli.App {
 			Flags: []cli.Flag{
 				BootStrapFlag,
 				NodeFlag,
+				LogLevelFlag,
+				NickFlag,
+			},
+		},
+
+		{
+			Name:   "room",
+			Usage:  "Start ChatRoom",
+			Action: StartRoom,
+			Flags: []cli.Flag{
+				BootStrapFlag,
+				LogLevelFlag,
+				NickFlag,
+			},
+		},
+
+		{
+			Name:   "join",
+			Usage:  "Join ChatRoom",
+			Action: JoinRoom,
+			Flags: []cli.Flag{
+				BootStrapFlag,
 				LogLevelFlag,
 				NickFlag,
 			},
@@ -178,6 +205,115 @@ func StartChat(ctx *cli.Context) {
 		chat.Chat(nick, wnSDK.GetWhiteNoiseID(), "", wnSDK)
 		waitToExit()
 	}
+}
+
+func StartRoom(ctx *cli.Context) {
+	logLevel := ctx.Int("log")
+	log.InitLog(logLevel, os.Stdout, log.PATH)
+	bootstrap := ctx.String("bootstrap")
+	sdk.BootStrapPeers = bootstrap
+	con := context.Background()
+	nick := ctx.String("nick")
+	if nick == "" {
+		nick = "Ninox"
+	}
+	room, err := sdk.NewRoom(con, nick, []string{})
+	if err != nil {
+		panic(err)
+	}
+
+	room.Start()
+	waitToExit()
+}
+
+func JoinRoom(ctx *cli.Context) {
+	logLevel := ctx.Int("log")
+	log.InitLog(logLevel, os.Stdout, log.PATH)
+	bootstrap := ctx.String("bootstrap")
+	sdk.BootStrapPeers = bootstrap
+	con := context.Background()
+	nick := ctx.String("nick")
+
+	client, err := sdk.NewClient(con)
+	if err != nil {
+		panic(err)
+	}
+	roomList := client.GetOnlineRooms()
+	log.Debug(roomList)
+
+	if roomList == nil || len(roomList) == 0 {
+		panic("no rooms")
+	}
+	room := roomList[0]
+
+	peers, err := client.GetMainNetPeers(10)
+	if err != nil {
+		panic(err)
+	}
+	if len(peers) == 0 {
+		panic("No peers exist")
+	}
+
+	index := rand.New(rand.NewSource(time.Now().UnixNano())).Int() % len(peers)
+	entry := peers[index]
+	log.Info("entry:", entry.String(), ",index:", index)
+	err = client.Register(entry)
+	if err != nil {
+		panic(err)
+	}
+
+	conn, _, err := client.Dial(room.Hoster)
+	if err != nil {
+		panic(err)
+	}
+
+	go func() {
+		for {
+			payload, err := secure.ReadPayload(conn)
+			if err != nil {
+				panic(err)
+			}
+			msg := pb.ChatMessage{}
+			err = proto.Unmarshal(payload, &msg)
+			if err != nil {
+				log.Error(err)
+				continue
+			}
+			log.Info(msg.Nick, ": ", string(msg.Data))
+		}
+	}()
+
+	//print funcs
+	input := make(chan string)
+	go func() {
+		for {
+			r := bufio.NewReader(os.Stdin)
+			in, err := r.ReadString('\n')
+			if err != nil {
+				if err == io.EOF {
+					continue
+				}
+				panic(err)
+			}
+			input <- in
+		}
+	}()
+
+	go func() {
+		for {
+			in := <-input
+			msg := pb.ChatMessage{
+				Nick: nick,
+				Data: []byte(in),
+			}
+			payload, _ := proto.Marshal(&msg)
+			_, err := conn.Write(secure.EncodePayload(payload))
+			if err != nil {
+				panic(err)
+			}
+		}
+	}()
+	waitToExit()
 }
 
 func waitToExit() {

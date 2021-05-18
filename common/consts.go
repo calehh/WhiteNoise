@@ -44,3 +44,8 @@ const GetMainnetPeersTimeout = time.Second * 5
 const ReqDHTPeersMaxAmount = 100
 
 const UnreadableTimeout = time.Minute * 5
+
+const (
+	NewRoomTimeout = time.Second * 30
+	GetRoomTimeout = time.Second * 10
+)

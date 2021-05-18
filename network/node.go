@@ -8,6 +8,7 @@ import (
 	"whitenoise/common/account"
 	"whitenoise/common/config"
 	"whitenoise/common/log"
+	"whitenoise/network/chatroom"
 	"whitenoise/network/gossip"
 	"whitenoise/network/host"
 	"whitenoise/network/noise"
@@ -16,6 +17,7 @@ import (
 type Node struct {
 	NoiseService *noise.NoiseService
 	DHTService   *gossip.DHTService
+	RoomService  *chatroom.RoomDnsService
 }
 
 func NewNode(ctx context.Context, cfg *config.NetworkConfig, acc account.Account) (*Node, error) {
@@ -44,9 +46,11 @@ func NewNode(ctx context.Context, cfg *config.NetworkConfig, acc account.Account
 	if err != nil {
 		return nil, err
 	}
+	roomService := chatroom.NewDnsService(ctx, system.Root, cfg, h)
 	return &Node{
 		NoiseService: noiseService,
 		DHTService:   pubsubService,
+		RoomService:  roomService,
 	}, nil
 }
 
@@ -54,14 +58,23 @@ func (node *Node) Start(cfg *config.NetworkConfig) {
 	if cfg.Mode == config.ClientMode {
 		node.NoiseService.Start()
 		node.NoiseService.SetPid(nil)
-		node.NoiseService.SetNotify()
+		node.NoiseService.SetNotify(nil)
 		return
 	}
+
 	node.DHTService.Start(cfg)
 	node.NoiseService.Start()
+
+
 	node.NoiseService.SetPid(node.DHTService.Pid())
 	node.DHTService.SetPid(node.NoiseService.ProxyPid(), node.NoiseService.RelayPid(), node.NoiseService.CmdPid())
-	node.NoiseService.SetNotify()
+
+	if cfg.Mode == config.BootMode{
+		node.RoomService.Start()
+		node.RoomService.SetPid(node.NoiseService.AckPid())
+	}
+
+	node.NoiseService.SetNotify(node.RoomService.Pid())
 }
 
 func (node *Node) Host() core.Host {

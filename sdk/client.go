@@ -15,6 +15,7 @@ import (
 	"whitenoise/common/account"
 	"whitenoise/common/config"
 	"whitenoise/common/log"
+	"whitenoise/internal/pb"
 	"whitenoise/network"
 )
 
@@ -42,6 +43,11 @@ type Client interface {
 	GetWhiteNoiseID() string
 	UnRegister()
 	EventBus() EventBus.Bus
+	Close()
+	// chatroom interface
+	RegNewRoom(name string, keywords []string) error
+	GetOnlineRooms() []*pb.RoomInfo
+	GetAllCircuits() []string
 }
 
 type WhiteNoiseClient struct {
@@ -157,6 +163,23 @@ func (sdk *WhiteNoiseClient) EventBus() EventBus.Bus {
 
 func (sdk *WhiteNoiseClient) UnRegister() {
 	sdk.node.NoiseService.UnRegister()
+}
+
+func (sdk *WhiteNoiseClient) Close() {
+	sdk.node.NoiseService.UnRegister()
+	sdk.node.NoiseService.Host().Close()
+}
+
+func (sdk *WhiteNoiseClient) RegNewRoom(name string, keywords []string) error {
+	return sdk.node.NoiseService.RegNewRoom(name, keywords)
+}
+
+func (sdk *WhiteNoiseClient) GetOnlineRooms() []*pb.RoomInfo {
+	return sdk.node.NoiseService.GetRooms()
+}
+
+func (sdk *WhiteNoiseClient) GetAllCircuits() []string {
+	return sdk.node.NoiseService.Relay().GetSessionIDList()
 }
 
 func generateSessionID(remoteID string, localID string) string {

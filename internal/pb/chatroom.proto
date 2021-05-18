@@ -1,0 +1,29 @@
+syntax = "proto3";
+package pb;
+
+message newRoom {
+  string commandid = 1;
+  string name = 2;
+  string from = 3;
+  repeated string keywords = 4;
+}
+
+message getRoom{
+  string commandId = 1;
+}
+
+message resRooms{
+  repeated roomInfo roomList = 1;
+}
+
+message roomInfo{
+  string name = 1;
+  repeated string Keywords = 2;
+  string  starttime = 3;
+  string hoster = 4;
+}
+
+message chatMessage{
+  string nick = 1;
+  bytes data = 2;
+}

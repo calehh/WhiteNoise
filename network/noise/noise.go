@@ -21,6 +21,7 @@ import (
 	"whitenoise/common/config"
 	"whitenoise/common/log"
 	"whitenoise/internal/pb"
+	"whitenoise/network/chatroom"
 	"whitenoise/network/session"
 	"whitenoise/protocol/ack"
 	"whitenoise/protocol/command"
@@ -147,11 +148,12 @@ func (service *NoiseService) SetPid(gossipPid *actor.PID) {
 	service.cmdManager.SetPid(service.RelayPid(), service.AckPid())
 }
 
-func (service *NoiseService) SetNotify() {
+func (service *NoiseService) SetNotify(roomPid *actor.PID) {
 	notifiee := NoiseNotifiee{
 		actCtx:   service.actCtx,
 		proxyPid: service.ProxyPid(),
 		relayPid: service.RelayPid(),
+		roomPid:  roomPid,
 	}
 	service.Host().Network().Notify(notifiee)
 }
@@ -330,6 +332,7 @@ func (service *NoiseService) NewCircuit(remoteIDString string, sessionId string)
 
 func (service *NoiseService) GetMainnetPeers(max int) ([]peer.AddrInfo, error) {
 	streamRaw, err := service.host.NewStream(service.ctx, service.BootstrapPeer, protocol.ID(proxy.PROXY_PROTOCOL))
+	defer streamRaw.Conn().Close()
 	if err != nil {
 		return nil, err
 	}
@@ -402,4 +405,102 @@ func (service *NoiseService) GetMainnetPeers(max int) ([]peer.AddrInfo, error) {
 		}
 		return peerInfos, nil
 	}
+}
+
+func (service *NoiseService) GetRooms() []*pb.RoomInfo {
+	ctx := context.Background()
+	streamRaw, err := service.Host().NewStream(ctx, service.BootstrapPeer, chatroom.GetRoomProtocol)
+	if err != nil {
+		log.Error(err)
+		return nil
+	}
+	stream := session.NewStream(streamRaw, ctx)
+	hash := sha256.Sum256([]byte(time.Now().String()))
+	getRoom := pb.GetRoom{
+		CommandId: secure.EncodeMSGIDHash(hash[:]),
+	}
+
+	payload, err := proto.Marshal(&getRoom)
+	if err != nil {
+		log.Error(err)
+		return nil
+	}
+
+	err = stream.RW.WriteMsg(payload)
+	if err != nil {
+		log.Error(err)
+		return nil
+	}
+
+	task := ack.Task{
+		Id:      getRoom.CommandId,
+		Channel: make(chan ack.Result),
+	}
+	service.ackManager.AddTask(task)
+	defer service.ackManager.DeletTask(getRoom.CommandId)
+	select {
+	case <-time.After(common.GetRoomTimeout):
+		log.Error(errors.New("timeout"))
+		return nil
+	case result := <-task.Channel:
+		if !result.Ok {
+			log.Error(errors.New("New Room rejected: " + string(result.Data)))
+			return nil
+		} else {
+			//todo: handle this correct result
+			resRooms := pb.ResRooms{}
+			err = proto.Unmarshal(result.Data, &resRooms)
+			if err != nil {
+				log.Error(errors.New("Unmarshal err: " + err.Error()))
+				return nil
+			}
+			return resRooms.RoomList
+		}
+	}
+}
+
+func (service *NoiseService) RegNewRoom(name string, keywords []string) error {
+	ctx := context.Background()
+	streamRaw, err := service.Host().NewStream(ctx, service.BootstrapPeer, chatroom.NewRoomProtocol)
+	if err != nil {
+		return err
+	}
+	stream := session.NewStream(streamRaw, ctx)
+	newRoom := pb.NewRoom{
+		Commandid: "",
+		Name:      name,
+		From:      service.Account.GetWhiteNoiseID().String(),
+		Keywords:  keywords,
+	}
+	noID, err := proto.Marshal(&newRoom)
+	if err != nil {
+		return err
+	}
+	hash := sha256.Sum256(noID)
+	newRoom.Commandid = secure.EncodeMSGIDHash(hash[:])
+	payload, err := proto.Marshal(&newRoom)
+	if err != nil {
+		return err
+	}
+
+	err = stream.RW.WriteMsg(payload)
+	if err != nil {
+		return err
+	}
+
+	task := ack.Task{
+		Id:      newRoom.Commandid,
+		Channel: make(chan ack.Result),
+	}
+	service.ackManager.AddTask(task)
+	defer service.ackManager.DeletTask(newRoom.Commandid)
+	select {
+	case <-time.After(common.NewRoomTimeout):
+		return errors.New("timeout")
+	case result := <-task.Channel:
+		if !result.Ok {
+			return errors.New("New Room rejected: " + string(result.Data))
+		}
+	}
+	return nil
 }

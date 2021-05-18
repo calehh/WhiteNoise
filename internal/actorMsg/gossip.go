@@ -2,6 +2,10 @@ package actorMsg
 
 import "github.com/libp2p/go-libp2p-core/peer"
 
+type ReqStreamClosed struct {
+	PeerID peer.ID
+}
+
 type ReqGossipJoint struct {
 	DesHash   string
 	NegCypher []byte
