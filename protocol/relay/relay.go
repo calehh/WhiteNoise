@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"errors"
-	"github.com/golang/protobuf/proto"
-	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/Evanesco-Labs/WhiteNoise/common"
 	"github.com/Evanesco-Labs/WhiteNoise/common/config"
 	"github.com/Evanesco-Labs/WhiteNoise/common/log"
@@ -13,6 +11,8 @@ import (
 	"github.com/Evanesco-Labs/WhiteNoise/network/session"
 	"github.com/Evanesco-Labs/WhiteNoise/protocol/ack"
 	"github.com/Evanesco-Labs/WhiteNoise/secure"
+	"github.com/golang/protobuf/proto"
+	"github.com/libp2p/go-libp2p-core/network"
 )
 
 const RelayProtocol string = "/relay"
@@ -254,7 +254,7 @@ func (manager *RelayMsgManager) handleRelayProbe(relay *pb.Relay, s session.Stre
 
 func (manager *RelayMsgManager) handleDisconnect(relay *pb.Relay, s session.Stream, data []byte) error {
 	log.Debug("Handle Disconnect signal")
-	var dis pb.Disconnect
+	var dis pb.DisconnectCircuit
 	err := proto.Unmarshal(relay.Data, &dis)
 	if err != nil {
 		return err
@@ -412,7 +412,7 @@ func NewProbeSignal(sessionId string) ([]byte, error) {
 }
 
 func NewDisconnect(sessionId string) ([]byte, error) {
-	dis := pb.Disconnect{
+	dis := pb.DisconnectCircuit{
 		SessionId: sessionId,
 		ErrCode:   0,
 	}

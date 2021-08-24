@@ -37,7 +37,7 @@ message probeSignal {
   bytes data = 2;
 }
 
-message disconnect {
+message disconnectCircuit {
   string sessionId = 1;
   int32 errCode = 2;
 }
